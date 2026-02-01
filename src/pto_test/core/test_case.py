@@ -1,0 +1,299 @@
+"""
+Test case base classes and data structures.
+
+Provides the foundation for defining PTO test cases that can be
+executed on both simulation and hardware platforms.
+"""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Union
+
+import numpy as np
+
+
+class DataType(Enum):
+    """Supported data types for tensors."""
+
+    FP32 = "fp32"
+    FP16 = "fp16"
+    INT32 = "int32"
+    INT64 = "int64"
+    BOOL = "bool"
+
+    @property
+    def numpy_dtype(self) -> np.dtype:
+        """Get corresponding numpy dtype."""
+        mapping = {
+            DataType.FP32: np.float32,
+            DataType.FP16: np.float16,
+            DataType.INT32: np.int32,
+            DataType.INT64: np.int64,
+            DataType.BOOL: np.bool_,
+        }
+        return mapping[self]
+
+    @property
+    def c_type(self) -> str:
+        """Get corresponding C type name."""
+        mapping = {
+            DataType.FP32: "float",
+            DataType.FP16: "half",
+            DataType.INT32: "int32_t",
+            DataType.INT64: "int64_t",
+            DataType.BOOL: "bool",
+        }
+        return mapping[self]
+
+
+@dataclass
+class TensorSpec:
+    """Specification for a test tensor.
+
+    Attributes:
+        name: Tensor name, used as parameter name in IR and C++ code.
+        shape: Tensor shape as list of integers.
+        dtype: Data type of tensor elements.
+        init_value: Initial value for the tensor. Can be:
+            - None: Will be zero-initialized
+            - Scalar: All elements set to this value
+            - np.ndarray: Use this array directly
+            - Callable: Function that returns an array given the shape
+        is_output: Whether this tensor is an output (result to validate).
+    """
+
+    name: str
+    shape: List[int]
+    dtype: DataType
+    init_value: Optional[Union[int, float, np.ndarray, Callable]] = None
+    is_output: bool = False
+
+    @property
+    def size(self) -> int:
+        """Total number of elements."""
+        result = 1
+        for dim in self.shape:
+            result *= dim
+        return result
+
+    @property
+    def nbytes(self) -> int:
+        """Total size in bytes."""
+        return self.size * np.dtype(self.dtype.numpy_dtype).itemsize
+
+    def create_array(self) -> np.ndarray:
+        """Create a numpy array based on this specification."""
+        if self.init_value is None:
+            return np.zeros(self.shape, dtype=self.dtype.numpy_dtype)
+        elif isinstance(self.init_value, np.ndarray):
+            return self.init_value.astype(self.dtype.numpy_dtype)
+        elif callable(self.init_value):
+            return self.init_value(self.shape).astype(self.dtype.numpy_dtype)
+        else:
+            return np.full(self.shape, self.init_value, dtype=self.dtype.numpy_dtype)
+
+
+@dataclass
+class TestConfig:
+    """Configuration for test execution.
+
+    Attributes:
+        platform: Target platform ("a2a3sim" or "a2a3").
+        device_id: Device ID for hardware platform.
+        atol: Absolute tolerance for result comparison.
+        rtol: Relative tolerance for result comparison.
+        block_dim: Number of blocks for parallel execution.
+        aicpu_thread_num: Number of AICPU scheduler threads.
+    """
+
+    platform: str = "a2a3sim"
+    device_id: int = 0
+    atol: float = 1e-5
+    rtol: float = 1e-5
+    block_dim: int = 1
+    aicpu_thread_num: int = 1
+
+    def __post_init__(self):
+        if self.platform not in ("a2a3sim", "a2a3"):
+            raise ValueError(f"Invalid platform: {self.platform}")
+
+
+@dataclass
+class TestResult:
+    """Result of a test execution.
+
+    Attributes:
+        passed: Whether the test passed.
+        test_name: Name of the test case.
+        error: Error message if test failed.
+        max_abs_error: Maximum absolute error observed.
+        max_rel_error: Maximum relative error observed.
+        mismatch_count: Number of mismatched elements.
+        mismatch_indices: Sample of indices with mismatches.
+        execution_time: Time taken to execute (in seconds).
+    """
+
+    passed: bool
+    test_name: str
+    error: Optional[str] = None
+    max_abs_error: Optional[float] = None
+    max_rel_error: Optional[float] = None
+    mismatch_count: int = 0
+    mismatch_indices: Optional[List[tuple]] = None
+    execution_time: Optional[float] = None
+
+    def __str__(self) -> str:
+        if self.passed:
+            return f"PASS: {self.test_name}"
+        else:
+            msg = f"FAIL: {self.test_name}"
+            if self.error:
+                msg += f" - {self.error}"
+            if self.max_abs_error is not None:
+                msg += f" (max_abs_err={self.max_abs_error:.6e})"
+            return msg
+
+
+class PTOTestCase(ABC):
+    """Abstract base class for PTO test cases.
+
+    Subclasses must implement:
+        - get_name(): Return the test case name
+        - define_tensors(): Define input/output tensors
+        - get_program(): Return a @pl.program class or ir.Program
+        - get_orchestration(): Return orchestration C++ code for Simpler
+        - compute_expected(): Compute expected results with NumPy
+
+    Example:
+        import pypto.language as pl
+
+        class TestTileAdd(PTOTestCase):
+            def get_name(self):
+                return "tile_add_128x128"
+
+            def define_tensors(self):
+                return [
+                    TensorSpec("a", [128, 128], DataType.FP32, init_value=2.0),
+                    TensorSpec("b", [128, 128], DataType.FP32, init_value=3.0),
+                    TensorSpec("c", [128, 128], DataType.FP32, is_output=True),
+                ]
+
+            def get_program(self):
+                @pl.program
+                class TileAddProgram:
+                    @pl.function
+                    def tile_add(self, a: pl.Tensor[[128, 128], pl.FP32],
+                                 b: pl.Tensor[[128, 128], pl.FP32],
+                                 c: pl.Tensor[[128, 128], pl.FP32]):
+                        tile_a = pl.op.block.load(a, 0, 0, 128, 128)
+                        tile_b = pl.op.block.load(b, 0, 0, 128, 128)
+                        tile_c = pl.op.block.add(tile_a, tile_b)
+                        pl.op.block.store(tile_c, 0, 0, 128, 128, c)
+                return TileAddProgram
+
+            def get_orchestration(self):
+                return '''
+                #include "runtime.h"
+                extern "C" int build_test_graph(Runtime* runtime, uint64_t* args, int arg_count) {
+                    // ... orchestration code ...
+                    return 0;
+                }
+                '''
+
+            def compute_expected(self, inputs):
+                return {"c": inputs["a"] + inputs["b"]}
+    """
+
+    def __init__(self, config: Optional[TestConfig] = None):
+        """Initialize test case.
+
+        Args:
+            config: Test configuration. If None, uses default config.
+        """
+        self.config = config or TestConfig()
+        self._tensor_specs: Optional[List[TensorSpec]] = None
+
+    @abstractmethod
+    def get_name(self) -> str:
+        """Return the unique name for this test case."""
+        pass
+
+    @abstractmethod
+    def define_tensors(self) -> List[TensorSpec]:
+        """Define all input and output tensors for this test.
+
+        Returns:
+            List of TensorSpec objects defining the tensors.
+        """
+        pass
+
+    @abstractmethod
+    def get_program(self) -> Any:
+        """Return a PyPTO Program for kernel code generation.
+
+        Returns:
+            PyPTO Program object (from @pl.program decorator or ir.Program).
+        """
+        pass
+
+    @abstractmethod
+    def get_orchestration(self) -> str:
+        """Return orchestration C++ code for Simpler runtime.
+
+        The orchestration function must be named 'build_test_graph' and have
+        the signature: int build_test_graph(Runtime* runtime, uint64_t* args, int arg_count)
+
+        Returns:
+            C++ source code string for the orchestration function.
+        """
+        pass
+
+    @abstractmethod
+    def compute_expected(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """Compute expected outputs using NumPy.
+
+        Args:
+            inputs: Dict mapping input tensor names to numpy arrays.
+
+        Returns:
+            Dict mapping output tensor names to expected numpy arrays.
+        """
+        pass
+
+    @property
+    def tensor_specs(self) -> List[TensorSpec]:
+        """Get cached tensor specifications."""
+        if self._tensor_specs is None:
+            self._tensor_specs = self.define_tensors()
+        return self._tensor_specs
+
+    def get_input_tensors(self) -> List[TensorSpec]:
+        """Get input tensor specifications."""
+        return [t for t in self.tensor_specs if not t.is_output]
+
+    def get_output_tensors(self) -> List[TensorSpec]:
+        """Get output tensor specifications."""
+        return [t for t in self.tensor_specs if t.is_output]
+
+    def prepare_inputs(self) -> Dict[str, np.ndarray]:
+        """Prepare input arrays based on tensor specifications.
+
+        Returns:
+            Dict mapping tensor names to numpy arrays.
+        """
+        inputs = {}
+        for spec in self.get_input_tensors():
+            inputs[spec.name] = spec.create_array()
+        return inputs
+
+    def prepare_outputs(self) -> Dict[str, np.ndarray]:
+        """Prepare output arrays based on tensor specifications.
+
+        Returns:
+            Dict mapping tensor names to numpy arrays (zero-initialized).
+        """
+        outputs = {}
+        for spec in self.get_output_tensors():
+            outputs[spec.name] = np.zeros(spec.shape, dtype=spec.dtype.numpy_dtype)
+        return outputs
