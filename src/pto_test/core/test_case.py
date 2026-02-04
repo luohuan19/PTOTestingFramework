@@ -184,7 +184,6 @@ class PTOTestCase(ABC):
 
     Optional overrides:
         - get_strategy(): Return optimization strategy (default: Default)
-        - get_orchestration(): Return custom orchestration C++ (default: auto-generated)
 
     Example:
         import pypto.language as pl
@@ -203,7 +202,7 @@ class PTOTestCase(ABC):
             def get_program(self):
                 @pl.program
                 class TileAddProgram:
-                    @pl.function
+                    @pl.function(type=pl.FunctionType.InCore)
                     def tile_add(self, a: pl.Tensor[[128, 128], pl.FP32],
                                  b: pl.Tensor[[128, 128], pl.FP32],
                                  c: pl.Tensor[[128, 128], pl.FP32]):
@@ -212,8 +211,12 @@ class PTOTestCase(ABC):
                         tile_c = pl.op.block.add(tile_a, tile_b)
                         pl.op.block.store(tile_c, 0, 0, 128, 128, c)
                 return TileAddProgram
-
-            # get_orchestration() not implemented - auto-generated!
+                @pl.function(type=pl.FunctionType.Orchestration)
+                def orchestrator(self, a: pl.Tensor[[128, 128], pl.FP32],
+                                 b: pl.Tensor[[128, 128], pl.FP32],
+                                 c: pl.Tensor[[128, 128], pl.FP32]) -> pl.Tensor[[128, 128], pl.FP32]:
+                    return self.tile_add(a, b, c)
+                # if orchestration function is not implemented, will be auto-generated
 
             def compute_expected(self, tensors, params=None):
                 tensors["c"][:] = tensors["a"] + tensors["b"]
@@ -263,21 +266,6 @@ class PTOTestCase(ABC):
         from pypto.ir.pass_manager import OptimizationStrategy
 
         return OptimizationStrategy.Default
-
-    def get_orchestration(self) -> Optional[str]:
-        """Return orchestration C++ code for Simpler runtime.
-
-        Override to provide custom orchestration for complex multi-kernel
-        test cases. Return None to use auto-generated orchestration.
-
-        The orchestration function must be named 'build_test_graph' and have
-        the signature: int build_test_graph(Runtime* runtime, uint64_t* args, int arg_count)
-
-        Returns:
-            C++ source code string for the orchestration function,
-            or None for auto-generation.
-        """
-        return None
 
     @abstractmethod
     def compute_expected(

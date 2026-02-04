@@ -10,7 +10,6 @@ Orchestrates the full test execution pipeline:
 6. Validate results
 """
 
-import json
 import shutil
 import sys
 import tempfile
@@ -106,11 +105,8 @@ class TestRunner:
             # Import codegen modules
             from pto_test.codegen.config_generator import ConfigGenerator
             from pto_test.codegen.golden_generator import GoldenGenerator
-            from pto_test.codegen.kernel_generator import KernelGenerator
             from pto_test.codegen.orch_generator import OrchGenerator
-
-            kernels_dir = work_dir / "kernels"
-            kernels_dir.mkdir(parents=True, exist_ok=True)
+            from pto_test.codegen.program_generator import ProgramCodeGenerator
 
             # 1. Generate kernel C++ files
             program = test_case.get_program()
@@ -121,74 +117,54 @@ class TestRunner:
                 )
 
             strategy = test_case.get_strategy()
-            kernel_gen = KernelGenerator(strategy=strategy)
-            kernel_configs = kernel_gen.generate(
+            codegen = ProgramCodeGenerator(strategy=strategy)
+            codegen_result = codegen.generate(
                 program,
-                kernels_dir,
+                work_dir,  # Pass work_dir instead of kernels_dir
                 dump_passes=self.config.dump_passes,
             )
+
+            # Extract results
+            kernel_configs = codegen_result["kernels"]
+            orch_info = codegen_result.get("orchestration")
 
             if not kernel_configs:
                 raise ValueError(f"No kernels generated for {test_name}")
 
-            # Move pass_dump to same level as metadata.json if it exists
-            pass_dump_in_kernels = kernels_dir / "pass_dump"
-            if pass_dump_in_kernels.exists():
-                pass_dump_target = work_dir / "pass_dump"
-                # Remove target if it exists to avoid nested directories
-                if pass_dump_target.exists():
-                    shutil.rmtree(pass_dump_target)
-                shutil.move(str(pass_dump_in_kernels), str(pass_dump_target))
+            # 2. Handle orchestration and kernel_config.py
+            if orch_info is None:
+                # Fallback: No orchestration from ir.compile()
+                # Need to generate both orchestration and kernel_config.py
+                # alloc func_id
+                for func_id, kernel_config in enumerate(kernel_configs):
+                    kernel_config["func_id"] = func_id
 
-            # 2. Generate orchestration C++ file
-            orch_dir = kernels_dir / "orchestration"
-            orch_dir.mkdir()
-
-            orch_code = test_case.get_orchestration()
-            if orch_code is None:
-                # Auto-generate orchestration
+                # Auto-generate orchestration template
                 orch_gen = OrchGenerator()
                 orch_code = orch_gen.generate(test_case.tensor_specs, kernel_configs)
 
-            orch_path = orch_dir / "orch.cpp"
-            orch_path.write_text(orch_code)
+                # Write orchestration
+                orch_dir = work_dir / "orchestration"
+                orch_dir.mkdir(exist_ok=True)
+                orch_path = orch_dir / "orch.cpp"
+                orch_path.write_text(orch_code)
+                orch_func_name = "build_test_graph"
 
-            # 3. Generate kernel_config.py
-            config_gen = ConfigGenerator()
-            config_gen.write(
-                kernels_dir,
-                kernel_configs,
-                str(orch_path),
-                "build_test_graph",
-            )
+                # Generate kernel_config.py
+                config_gen = ConfigGenerator()
+                config_gen.write(
+                    work_dir,
+                    kernel_configs,
+                    str(orch_path),
+                    orch_func_name,
+                )
 
-            # 4. Generate golden.py with inline compute logic
-            golden_path = kernels_dir / "golden.py"
+            # 3. Generate golden.py in work_dir
+            golden_path = work_dir / "golden.py"
             golden_gen = GoldenGenerator()
             golden_gen.write(test_case, golden_path)
 
-            # 5. Write metadata.json if saving
-            if self.config.save_kernels:
-                metadata = {
-                    "test_name": test_name,
-                    "strategy": str(strategy),
-                    "dump_passes": self.config.dump_passes,
-                    "timestamp": datetime.now().isoformat(),
-                    "kernels": [
-                        {
-                            "func_id": k["func_id"],
-                            "function_name": k.get("function_name", "unknown"),
-                            "core_type": k["core_type"],
-                            "source": str(
-                                Path("kernels") / Path(k["source"]).relative_to(kernels_dir)
-                            ),
-                        }
-                        for k in kernel_configs
-                    ],
-                }
-                (work_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, default=str))
-
-            # 6. Execute via CodeRunner (skip if codegen_only)
+            # 4. Execute via CodeRunner (skip if codegen_only)
             if self.config.codegen_only:
                 # Codegen-only mode: skip runtime execution
                 return TestResult(
@@ -197,7 +173,7 @@ class TestRunner:
                     execution_time=time.time() - start_time,
                 )
 
-            self._execute_with_code_runner(kernels_dir, golden_path, test_name)
+            self._execute_with_code_runner(work_dir, golden_path, test_name)
 
             return TestResult(
                 passed=True,
@@ -221,14 +197,14 @@ class TestRunner:
 
     def _execute_with_code_runner(
         self,
-        kernels_dir: Path,
+        work_dir: Path,
         golden_path: Path,
         test_name: str,
     ) -> None:
         """Execute test using simpler's CodeRunner.
 
         Args:
-            kernels_dir: Path to directory with kernel_config.py
+            work_dir: Path to work directory with kernel_config.py and golden.py
             golden_path: Path to golden.py
             test_name: Name of the test (for logging)
 
@@ -238,7 +214,7 @@ class TestRunner:
         from code_runner import CodeRunner
 
         runner = CodeRunner(
-            kernels_dir=str(kernels_dir),
+            kernels_dir=str(work_dir),
             golden_path=str(golden_path),
             platform=self.config.platform,
             device_id=self.config.device_id,

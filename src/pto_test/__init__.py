@@ -8,8 +8,8 @@ End-to-end testing framework for PyPTO frontend and Simpler runtime.
 from pto_test.codegen import (
     ConfigGenerator,
     GoldenGenerator,
-    KernelGenerator,
     OrchGenerator,
+    ProgramCodeGenerator,
 )
 from pto_test.core.test_case import (
     DataType,
@@ -33,7 +33,7 @@ __all__ = [
     "TestSuite",
     "ResultValidator",
     # Codegen
-    "KernelGenerator",
+    "ProgramCodeGenerator",
     "OrchGenerator",
     "ConfigGenerator",
     "GoldenGenerator",

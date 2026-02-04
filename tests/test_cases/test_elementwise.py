@@ -25,8 +25,8 @@ class TestTileAdd(PTOTestCase):
     """Test case for tile element-wise addition.
 
     This test case demonstrates the simplified pattern:
-    - No get_orchestration() override needed (auto-generated)
-    - Just implement get_program() and compute_expected()
+    - Just implement incore function in get_program() and compute_expected()
+    - Orchestration function will be auto-generated
 
     Note: PyPTO requires shape dimensions to be compile-time constants in type
     annotations. The shape is fixed at 128x128 for this test case.
@@ -64,15 +64,21 @@ class TestTileAdd(PTOTestCase):
                 a: pl.Tensor[[128, 128], pl.FP32],
                 b: pl.Tensor[[128, 128], pl.FP32],
                 c: pl.Tensor[[128, 128], pl.FP32],
-            ):
+            ) -> pl.Tensor[[128, 128], pl.FP32]:
                 tile_a = pl.op.block.load(a, 0, 0, 128, 128)
                 tile_b = pl.op.block.load(b, 0, 0, 128, 128)
                 tile_c = pl.op.block.add(tile_a, tile_b)
-                pl.op.block.store(tile_c, 0, 0, 128, 128, c)
+                out_c = pl.op.block.store(tile_c, 0, 0, 128, 128, c)
+                return out_c
+
+            @pl.function(type=pl.FunctionType.Orchestration)
+            def orchestrator(
+                self, a: pl.Tensor[[128, 128], pl.FP32], b: pl.Tensor[[128, 128], pl.FP32]
+            ) -> pl.Tensor[[128, 128], pl.FP32]:
+                out_c = self.tile_add(a, b)
+                return out_c
 
         return TileAddProgram
-
-    # NOTE: get_orchestration() is NOT overridden - auto-generated!
 
     def compute_expected(self, tensors, params=None):
         tensors["c"][:] = tensors["a"] + tensors["b"]
@@ -119,33 +125,24 @@ class TestTileMul(PTOTestCase):
                 a: pl.Tensor[[128, 128], pl.FP32],
                 b: pl.Tensor[[128, 128], pl.FP32],
                 c: pl.Tensor[[128, 128], pl.FP32],
-            ):
+            ) -> pl.Tensor[[128, 128], pl.FP32]:
                 tile_a = pl.op.block.load(a, 0, 0, 128, 128)
                 tile_b = pl.op.block.load(b, 0, 0, 128, 128)
                 tile_c = pl.op.block.mul(tile_a, tile_b)
-                pl.op.block.store(tile_c, 0, 0, 128, 128, c)
+                out_c = pl.op.block.store(tile_c, 0, 0, 128, 128, c)
+                return out_c
+
+            @pl.function(type=pl.FunctionType.Orchestration)
+            def orchestrator(
+                self, a: pl.Tensor[[128, 128], pl.FP32], b: pl.Tensor[[128, 128], pl.FP32]
+            ) -> pl.Tensor[[128, 128], pl.FP32]:
+                out_c = self.tile_mul(a, b)
+                return out_c
 
         return TileMulProgram
 
-    # NOTE: get_orchestration() is NOT overridden - auto-generated!
-
     def compute_expected(self, tensors, params=None):
-        # 多步计算
-        temp1 = np.exp(tensors["a"])
-        temp2 = np.log(tensors["b"] + 1e-8)
-        temp3 = np.maximum(temp1 * temp2, 0)
-
-        # 使用各种 NumPy 函数
-        result = np.sqrt(
-            temp3 + tensors["a"] ** 2
-        )  # 注意：这里改用tensors["a"]因为只有a,b,c三个tensor
-        result = np.clip(result, -100, 100)
-
-        # 条件逻辑
-        mask = tensors["a"] > 0
-        result = np.where(mask, result, -result)
-
-        tensors["c"][:] = result
+        tensors["c"][:] = tensors["a"] * tensors["b"]
 
 
 class TestTileAddWithPTOAS(TestTileAdd):

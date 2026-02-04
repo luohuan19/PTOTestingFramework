@@ -12,7 +12,12 @@ if TYPE_CHECKING:
 
 
 class OrchGenerator:
-    """Generates orchestration C++ code for simpler runtime.
+    """[LEGACY] Generates orchestration C++ code for simpler runtime.
+
+    DEPRECATED: New test cases should define orchestration functions
+    in PyPTO IR using FunctionType.Orchestration and let ir.compile()
+    generate the orchestration code automatically. This generator is
+    kept for backward compatibility only.
 
     The generated function has the signature:
         extern "C" int build_test_graph(Runtime* runtime, uint64_t* args, int arg_count)
@@ -25,7 +30,7 @@ class OrchGenerator:
     - Providing a placeholder for user-defined task creation
 
     Task creation and dependency setup must be implemented by the user.
-    Override get_orchestration() in your test case to provide custom task logic.
+    Generate template orchestration code automatically if orchestration function is not in program.
 
     Example:
         generator = OrchGenerator(function_name="build_test_graph")
@@ -230,7 +235,7 @@ class OrchGenerator:
             lines.append("    // Available kernel func_ids:\n")
             for i, cfg in enumerate(kernel_configs):
                 func_id = cfg.get("func_id", i)
-                kernel_name = cfg.get("name", f"kernel_{i}")
+                kernel_name = cfg.get("source")
                 lines.append(f"    //   - func_id={func_id}: {kernel_name}\n")
             lines.append("    //\n")
 
@@ -269,7 +274,4 @@ class MultiKernelOrchGenerator(OrchGenerator):
             C++ orchestration source code.
         """
         # TODO: Implement multi-kernel task graph generation
-        raise NotImplementedError(
-            "Multi-kernel orchestration not yet implemented. "
-            "Override get_orchestration() in your test case for complex cases."
-        )
+        raise NotImplementedError("Multi-kernel orchestration not yet implemented. ")

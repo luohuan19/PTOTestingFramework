@@ -73,31 +73,8 @@ class StandaloneRunner:
         if not test_path.exists():
             raise ValueError(f"Test directory not found: {test_dir}")
 
-        kernels_dir = test_path / "kernels"
+        kernels_dir = test_path
         golden_path = kernels_dir / "golden.py"
-        kernel_config = kernels_dir / "kernel_config.py"
-        orch_path = kernels_dir / "orchestration" / "orch.cpp"
-
-        # Validate required files
-        missing = []
-        if not kernels_dir.exists():
-            missing.append(str(kernels_dir))
-        if not golden_path.exists():
-            missing.append(str(golden_path))
-        if not kernel_config.exists():
-            missing.append(str(kernel_config))
-        if not orch_path.exists():
-            missing.append(str(orch_path))
-
-        if missing:
-            raise ValueError(f"Required files missing in {test_dir}:\n  " + "\n  ".join(missing))
-
-        # Check if orchestration contains TODO marker (not completed)
-        orch_content = orch_path.read_text()
-        if "TODO: Add your task creation code here" in orch_content:
-            print("\n⚠️  WARNING: Orchestration file contains TODO marker!")
-            print(f"⚠️  Please complete the task creation in: {orch_path}")
-            print("⚠️  The test may fail without proper task implementation.\n")
 
         # Execute via CodeRunner
         from code_runner import CodeRunner

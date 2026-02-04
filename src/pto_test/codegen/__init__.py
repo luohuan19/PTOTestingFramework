@@ -11,11 +11,11 @@ into the files required by simpler's CodeRunner:
 
 from pto_test.codegen.config_generator import ConfigGenerator
 from pto_test.codegen.golden_generator import GoldenGenerator
-from pto_test.codegen.kernel_generator import KernelGenerator
 from pto_test.codegen.orch_generator import OrchGenerator
+from pto_test.codegen.program_generator import ProgramCodeGenerator
 
 __all__ = [
-    "KernelGenerator",
+    "ProgramCodeGenerator",
     "OrchGenerator",
     "ConfigGenerator",
     "GoldenGenerator",
