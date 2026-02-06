@@ -142,6 +142,7 @@ class ProgramCodeGenerator:
 
         # Import ir module
         from pypto import ir
+        from pypto.backend import BackendType
 
         # Call ir.compile() to generate all code directly in output_dir
         ir.compile(
@@ -149,7 +150,7 @@ class ProgramCodeGenerator:
             output_dir=str(output_dir),
             strategy=self.strategy,
             dump_passes=dump_passes,
-            codegen=ir.CodegenBackend.CCE,
+            backend_type=BackendType.CCE,
         )
         # Files are now in output_dir with structure:
         #   output_dir/kernels/aiv/*.cpp and output_dir/kernels/aic/*.cpp
