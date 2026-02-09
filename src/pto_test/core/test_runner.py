@@ -102,11 +102,15 @@ class TestRunner:
             use_temp = True
 
         try:
-            # Import codegen modules
+            # Set PyPTO backend type to CCE for code generation
+            from pypto.backend import BackendType, set_backend_type
+
             from pto_test.codegen.config_generator import ConfigGenerator
             from pto_test.codegen.golden_generator import GoldenGenerator
             from pto_test.codegen.orch_generator import OrchGenerator
             from pto_test.codegen.program_generator import ProgramCodeGenerator
+
+            set_backend_type(BackendType.CCE)
 
             # 1. Generate kernel C++ files
             program = test_case.get_program()
@@ -132,6 +136,8 @@ class TestRunner:
                 raise ValueError(f"No kernels generated for {test_name}")
 
             # 2. Handle orchestration and kernel_config.py
+            # When orch_info is set, ir.compile() (pypto codegen_refact) already wrote
+            # orchestration/*.cpp and kernel_config.py; do not overwrite.
             if orch_info is None:
                 # Fallback: No orchestration from ir.compile()
                 # Need to generate both orchestration and kernel_config.py
